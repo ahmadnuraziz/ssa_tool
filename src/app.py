@@ -1,13 +1,18 @@
 import dash
 import pandas as pd
 import numpy as np
-from dash import Dash, dcc, html, Output, Input
+from dash import Dash, dcc, html, Output, Input, dash_table, State, callback
 import dash_bootstrap_components as dbc
 import plotly.graph_objs as go
 import scipy.stats as stats
 from statsmodels.stats.proportion import proportions_ztest
 
-app = dash.Dash(external_stylesheets=[dbc.themes.BOOTSTRAP],suppress_callback_exceptions=True)
+import base64
+import datetime
+import io
+import plotly.express as px
+
+app = dash.Dash(external_stylesheets=[dbc.themes.BOOTSTRAP,dbc.icons.BOOTSTRAP], suppress_callback_exceptions=True)
 server = app.server
 
 # the style arguments for the sidebar. We use position:fixed and a fixed width
@@ -38,14 +43,27 @@ sidebar = html.Div(
         # ),
         dbc.Nav(
             [
-                dbc.NavLink("Home", href="/homepage", active="exact"),
+                dbc.NavLink("Home", href="/", active="exact"),
                 dbc.NavLink("Power Analysis Calculator", href="/power-analysis-calculator-page", active="exact"),
                 dbc.NavLink("A/B Testing Calculator", href="/ab-testing-calculator-page", active="exact"),
+                dbc.NavLink("Outlier Detection", href="/outlier-detection",active="exact"),
                 dbc.NavLink("Coming Soon!", href="/coming-soon", active="exact")
             ],
             vertical=True,
             pills=True,
         ),
+
+        # html.Br(style={"line-height": "30"}),
+        html.Div([
+         dbc.Button(' Ahmad Nur Aziz',className="bi bi-linkedin",href="https://www.linkedin.com/in/ahmadnuraziz/"),
+         
+        ],style={
+        'position': 'fixed',
+        'left': 30,
+        'bottom': 20,
+        'width': '100%',
+        # 'text-align': 'center',
+        'padding': '10px 0'})
     ],
     style=SIDEBAR_STYLE,
 )
@@ -56,16 +74,17 @@ app.layout = html.Div([dcc.Location(id="url"), sidebar, content])
 
 @app.callback(Output("page-content", "children"), [Input("url", "pathname")])
 def render_page_content(pathname):
-    if pathname == "/homepage":
+    if pathname == "/":
         return dbc.Container([
           html.H1(children='Welcome!'),
-        	html.P("Here you can find a simple self-service analytics tools that (hopefully) can help your work."),
+        	html.P("Here you can find a simple self-service analytics tools."),
           html.P("The tools include:"),
           html.P("1. Power analysis calculator for sample size and experiment duration estimation."),
 					html.P("2. Post-experiment analysis calculator for A/B testing experiment analysis. On current version, still only for proportion metric, such as conversion rate."),
-          html.P("3. Coming soon!")
-				])
-    
+          html.P("3. Coming soon!"),
+
+        # dbc.Button(' Ahmad Nur Aziz',className="bi bi-linkedin",href="https://www.linkedin.com/in/ahmadnuraziz/")])
+    ])
     elif pathname == "/power-analysis-calculator-page":
         return dbc.Container([
     dbc.Row([
@@ -325,6 +344,98 @@ def render_page_content(pathname):
         ])
       ])
     ]) #container
+
+    elif pathname == "/outlier-detection":
+        return dbc.Container([
+  dbc.Row([
+  	dbc.Col(html.H1("Outlier Detection",className='text-primary my-4 text-center'), width=10)
+  ], justify="center"),
+
+	#Body Input
+  dbc.Row([
+		dbc.Col(
+      dbc.Card([
+        html.Div(html.H4("Input Data", className="mt-3"), className="text-center"),  # Align "A" with inputs
+      	dbc.CardBody([
+          dbc.Row([
+          html.Div([
+          	html.Label('Data Type'),
+             
+            dcc.Dropdown(
+            id='data_type',
+							multi=False,
+              value = 'cross_sectional',
+							options=[
+                {'label': 'Cross-sectional','value': 'cross_sectional'},
+                {'label': 'Time-series (coming soon)', 'value': 'time_series'}]
+              )
+          ],style={'width': '30%'}),
+          
+          #upload button
+					dcc.Upload(
+						id='upload-data',
+						children=html.Div([
+							# html.Button('Upload File')
+              dbc.Button("Upload File", color="light", className="me-1")
+							]),
+							
+							style={
+								'width': '100%',
+								'height': '60px',
+								'lineHeight': '60px',
+								# 'textAlign': 'center',
+								'margin': '10px'
+							},
+						)      
+					])
+				]),
+        
+				dbc.CardBody([
+				dbc.Row([
+          dbc.Col(
+    			# Div to display the DataFrame's head
+          html.Div(id='df-head')
+					)
+				])]),
+            
+				dbc.CardBody([
+				dbc.Row([
+          dbc.Col(
+          html.Div([
+          # Div to display the DataFrame's column
+            html.Label('Choose a column'),
+          	dcc.Dropdown(id='column-names-dropdown')
+					])
+          )
+					], style={'width':'30%'})
+      	]),
+        
+				dbc.CardBody([
+					dbc.Row(
+          	dbc.Col(
+          	# Placeholder for the boxplot
+    				dcc.Graph(id='boxplot')
+						)
+					),
+          
+					dbc.Row(
+						dbc.Col([
+          	dbc.Button("Outlier Removal", id="outlier_removal_button", color="dark", className="me-1")
+          	])
+        	), # Button row
+      	]),
+           
+			]))
+    ]), #body
+    
+		# dbc.Row(
+    #   dbc.Col(
+    #   	dbc.Card([
+		# 			html.Div(html.H3("Output", className="mt-3"), className="text-center"),  # Align "A" with inputs
+		# 	])
+		# 	)
+		# )
+  ]) #container
   
 
 @app.callback(
@@ -520,6 +631,77 @@ def update_calculation(users_varA, users_varB, conversions_varA, conversions_var
     ]
 
     return output_calculation
+
+df = pd.DataFrame()
+
+# Callback to parse uploaded file and update dropdown
+@app.callback(
+    [Output('column-names-dropdown', 'options'),
+     Output('df-head', 'children')],
+    [Input('upload-data', 'contents'),
+    Input('upload-data', 'filename')],
+    prevent_initial_call=True
+)
+
+def update_dropdown(contents, filename):
+    global df
+    content_type, content_string = contents.split(',')
+
+    decoded = base64.b64decode(content_string)
+    try:
+        if 'csv' in filename:
+          # Assume that the user uploaded a CSV file
+          df = pd.read_csv(
+              io.StringIO(decoded.decode('utf-8')))
+        elif 'xls' in filename:
+          # Assume that the user uploaded an excel file
+          df = pd.read_excel(io.BytesIO(decoded))
+    except Exception as e:
+        print(e)
+        return html.Div([
+          'There was an error processing this file.'
+        ])
+    
+		# Filter only numerical columns
+    numerical_cols = df.select_dtypes(include=['number']).columns
+
+    # Dropdown options from numerical columns
+    dropdown_options = [{'label': col, 'value': col} for col in numerical_cols]
+
+    # Generate a DataTable from DataFrame's head
+    df_head_table = html.Div([
+      html.Label('Preview Data'),
+       
+      dash_table.DataTable(
+    		columns=[{"name": i, "id": i} for i in df.columns],
+      	data=df.head().to_dict('records'),
+      	style_table={'overflowX': 'auto'},  # Horizontal scroll
+      	style_cell={'textAlign': 'left'},
+    	)]
+    )
+
+    return dropdown_options, df_head_table
+
+# Callback to generate and display the boxplot for the selected column
+@app.callback(
+    Output('boxplot', 'figure'),
+    [Input('column-names-dropdown', 'value')],
+    prevent_initial_call=True
+)
+
+def update_boxplot(selected_column):
+    global df
+    if selected_column is not None and not df.empty:
+        fig = px.box(df, y=selected_column)
+        
+        # Add a title to the plot
+        fig.update_layout(
+            title=f'Boxplot of {selected_column}',
+            title_x=0.5,  # Center the title
+            yaxis_title=selected_column,  # Add a title for the Y-axis
+        )
+        return fig
+    return {}
 
 if __name__ == "__main__":
     app.run_server(debug=True)
