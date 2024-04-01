@@ -1,4 +1,4 @@
-# Dash Default Template: ssa_tool
+# A Simple Self-service Analytics Tool
 
 Created on 2024-03-31 01:23:06.778808
 
